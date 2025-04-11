@@ -1,0 +1,88 @@
+# .gitignore
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Translations
+*.mo
+*.pot
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+env.bak/
+venv.bak/
+
+# PyCharm
+.idea/
+
+# VSCode
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# System files
+.DS_Store
+Thumbs.db
+
+
+data/processed/
+data/raw/csv/business.csv
+data/raw/csv/checkin.csv
+data/raw/csv/ratings.csv
+data/raw/csv/reviews.csv
+data/raw/csv/user.csv
+data/raw/json/yelp_academic_dataset_business.json
+data/raw/json/yelp_academic_dataset_checkin.json
+data/raw/json/yelp_academic_dataset_review.json
+data/raw/json/yelp_academic_dataset_user.json
+knn_output.log
+data/cache/kmeans_features_cache.pkl
+data/cache/kmeans_model_cache.pkl
+data/cache/elbow_method_results.pkl
+node_modules
+.next/server/
+.DS_Store

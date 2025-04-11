@@ -38,6 +38,7 @@
     "@radix-ui/react-toggle-group": "^1.1.1",
     "@radix-ui/react-tooltip": "^1.1.6",
     "@types/axios": "^0.9.36",
+    "@types/csv-parse": "^1.1.12",
     "@types/natural": "^5.1.5",
     "autoprefixer": "^10.4.20",
     "axios": "^1.8.4",
