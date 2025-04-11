@@ -12,13 +12,12 @@ import { RestaurantListItem } from "../components/restaurant-list-item"
 import UserListItem from "../components/user-list-item"
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs"
 import RecommendationExplanation from "../components/recommendation-explanation"
-import RecommendationLogs from "../components/recommendation-logs"
 import { useToast } from "../components/ui/use-toast"
 import { useRouter } from "next/navigation"
 import { logStore } from "../lib/recommendation-logs-store"
 import { RECOMMENDATION_CONFIG } from "@/config/recommendations"
 
-type RecommendationAlgorithm = "content-based" | "collaborative" | "matrix";
+type RecommendationAlgorithm = "content-based" | "collaborative" | "matrix" | "hybrid" | "kmeans";
 
 // Extended interface that includes necessary server-side properties
 interface RestaurantWithRating extends Restaurant {
@@ -103,14 +102,18 @@ export default function LikedPageClient() {
   const [recommendationsCache, setRecommendationsCache] = useState<Record<RecommendationAlgorithm, Restaurant[]>>({
     'content-based': [],
     'collaborative': [],
-    'matrix': []
+    'matrix': [],
+    'hybrid': [],
+    'kmeans': []
   });
 
   // Store similar users for each algorithm
   const [similarUsersCache, setSimilarUsersCache] = useState<Record<RecommendationAlgorithm, any[]>>({
     'content-based': [],
     'collaborative': [],
-    'matrix': []
+    'matrix': [],
+    'hybrid': [],
+    'kmeans': []
   });
 
   // Subscribe to like changes
@@ -192,10 +195,8 @@ export default function LikedPageClient() {
       
       setLikedRestaurants(liked)
       log(2, `Fetched ${liked.length} liked restaurants for user ID: ${userId}`);
-      console.log("LIKED RESTAURANTS ARRAY:", JSON.stringify(liked, null, 2));
       
       // Set loading to false immediately after setting liked restaurants
-      // so they are displayed right away in the left column
       setIsLoading(false)
       
       if (liked.length > 0) {
@@ -205,10 +206,9 @@ export default function LikedPageClient() {
         try {
           const defaultAlgorithm: RecommendationAlgorithm = 'content-based';
           setCurrentTab(defaultAlgorithm);
-          console.log("ATTEMPTING to fetch content-based recommendations");
           
           // First check if recommendations are already in the cache
-          if (recommendationsCache[defaultAlgorithm]?.length > 0) {
+          if (recommendationsCache[defaultAlgorithm]?.length > 0 && !forceRefreshCache) {
             log(2, `Using ${recommendationsCache[defaultAlgorithm].length} cached recommendations for ${defaultAlgorithm}`);
             setRecommendations(recommendationsCache[defaultAlgorithm]);
           } else {
@@ -225,9 +225,9 @@ export default function LikedPageClient() {
         }
         
         // Then pre-fetch all other algorithms in the background
-        const otherAlgorithms: RecommendationAlgorithm[] = ['collaborative', 'matrix'];
+        const otherAlgorithms: RecommendationAlgorithm[] = ['collaborative', 'matrix', 'hybrid', 'kmeans'];
         for (const algorithm of otherAlgorithms) {
-          if (!recommendationsCache[algorithm] || recommendationsCache[algorithm].length === 0) {
+          if (!recommendationsCache[algorithm] || recommendationsCache[algorithm].length === 0 || forceRefreshCache) {
             log(2, `Pre-fetching recommendations for ${algorithm} algorithm`);
             try {
               await updateRecommendationsForAlgorithm(algorithm, liked, userId, forceRefreshCache);
@@ -243,7 +243,6 @@ export default function LikedPageClient() {
         log(2, "No liked restaurants found, skipping recommendation fetch");
       }
       
-      // Return the liked restaurants to allow chaining
       return liked;
     } catch (error) {
       log(2, "Error fetching liked restaurants: " + (error as Error).message);
@@ -252,10 +251,7 @@ export default function LikedPageClient() {
         description: "Failed to load your liked restaurants. Please try again.",
         variant: "destructive",
       })
-      // Still need to set loading to false in case of error
       setIsLoading(false)
-      
-      // Re-throw to allow error handling in the chain
       throw error;
     }
   }
@@ -324,6 +320,27 @@ export default function LikedPageClient() {
         console.log(`SUCCESS: Received fresh ${algorithm} recommendations:`, data.recommendations);
       }
       
+      // Extra logging for kmeans
+      if (algorithm === 'kmeans') {
+        console.log(`KMEANS DEBUG - API Response:`, {
+          responseData: data,
+          explanation: data.explanation, 
+          logs: data.logs
+        });
+      }
+      
+      console.log(`DETAILED DATA for ${algorithm}:`, {
+        success: data.success,
+        recommendationsLength: data.recommendations?.length || 0,
+        hasExplanation: !!data.explanation,
+        logsLength: data.logs?.length || 0,
+        firstRecommendation: data.recommendations?.[0] ? {
+          id: data.recommendations[0].id,
+          business_id: data.recommendations[0].business_id,
+          name: data.recommendations[0].name
+        } : null
+      });
+      
       // Process recommendations to ensure they have id field
       const processedRecommendations = data.recommendations.map((rec: any) => {
         // Make sure we preserve all properties
@@ -385,30 +402,16 @@ export default function LikedPageClient() {
         log(3, `Setting ${recommendationsCache[newTab].length} cached recommendations for ${newTab}`);
         setRecommendations(recommendationsCache[newTab]);
         setSimilarUsers(similarUsersCache[newTab] || []);
-      } else {
-        // Clear recommendations while waiting for new ones
-        setRecommendations([]);
-        setSimilarUsers([]);
+        return; // Exit early if we have valid cached recommendations
       }
       
-      // Special case: For collaborative filtering, check if we have enough items but no results
-      const hasEnoughItemsButNoResults = 
-        newTab === 'collaborative' && 
-        likedRestaurants.length >= 3 && 
-        recommendationsCache[newTab]?.length === 0 &&
-        generatedAlgorithms.has(newTab);
-        
-      // Then fetch fresh recommendations if needed
-      if ((likedRestaurants.length > 0 && currentUser) && 
-          (hasEnoughItemsButNoResults || !recommendationsCache[newTab]?.length)) {
-        // If we previously had too few items but now have enough, force a refresh
-        const forceRefresh = hasEnoughItemsButNoResults;
-        
-        if (forceRefresh) {
-          log(3, `Forcing refresh for ${newTab} as we now have ${likedRestaurants.length} liked items`);
-        }
-        
-        updateRecommendationsForAlgorithm(newTab, likedRestaurants, currentUser.user_id, forceRefresh)
+      // Clear recommendations while waiting for new ones
+      setRecommendations([]);
+      setSimilarUsers([]);
+      
+      // Only fetch new recommendations if we have liked restaurants and no valid cache
+      if (likedRestaurants.length > 0 && currentUser) {
+        updateRecommendationsForAlgorithm(newTab, likedRestaurants, currentUser.user_id, false)
           .then(results => {
             if (results && results.length > 0) {
               // Only update if we're still on the same tab
@@ -440,16 +443,16 @@ export default function LikedPageClient() {
         </h1>
 
         <Tabs defaultValue="content-based" onValueChange={handleTabChange} className="mb-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="content-based">Content-Based</TabsTrigger>
-            <TabsTrigger value="collaborative">Collaborative Filtering</TabsTrigger>
-            <TabsTrigger value="matrix">Matrix Factorization</TabsTrigger>
+          <TabsList className="flex flex-row w-full overflow-x-auto space-x-2">
+            <TabsTrigger value="content-based" className="flex-1 min-w-max">Content-Based</TabsTrigger>
+            <TabsTrigger value="collaborative" className="flex-1 min-w-max">Collaborative Filtering</TabsTrigger>
+            <TabsTrigger value="matrix" className="flex-1 min-w-max">Matrix Factorization</TabsTrigger>
+            <TabsTrigger value="hybrid" className="flex-1 min-w-max">Hybrid</TabsTrigger>
+            <TabsTrigger value="kmeans" className="flex-1 min-w-max">K-Means</TabsTrigger>
           </TabsList>
         </Tabs>
 
         <RecommendationExplanation algorithm={currentTab} />
-        
-        <RecommendationLogs algorithm={currentTab} />
         
         <div className="grid md:grid-cols-3 gap-6">
           {/* Left Column - Liked Restaurants */}
@@ -580,6 +583,20 @@ export default function LikedPageClient() {
                             <li>Try liking more diverse and popular restaurants</li>
                           </ul>
                         </div>
+                      ) : currentTab === "kmeans" ? (
+                        <div>
+                          <p className="font-medium mb-2">K-Means Clustering Coming Soon</p>
+                          <p className="mb-2">We're working on implementing K-Means clustering for better recommendations.</p>
+                          <p className="text-xs mt-2">
+                            In the meantime, try another recommendation algorithm:
+                          </p>
+                          <ul className="text-xs list-disc list-inside mt-1">
+                            <li>Content-Based uses restaurant attributes</li>
+                            <li>Collaborative uses similar user preferences</li>
+                            <li>Matrix Factorization uses latent factors</li>
+                            <li>Hybrid combines all approaches</li>
+                          </ul>
+                        </div>
                       ) : (
                         <div>
                           <p>No recommendations found for your liked items.</p>
@@ -639,6 +656,10 @@ function getAlgorithmDescription(algorithm: string) {
       return "similar users"
     case "matrix":
       return "latent factors"
+    case "hybrid":
+      return "hybrid approach"
+    case "kmeans":
+      return "k-means clustering"
     default:
       return "your preferences"
   }

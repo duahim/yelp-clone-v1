@@ -3,9 +3,11 @@ import {
   Restaurant,
   Review,
   RecommendationResult,
-  HybridWeights
+  HybridWeights,
+  HybridStats
 } from '../types';
 import { HybridRecommender } from './base';
+import { ERRORS, METRICS, utils } from './index';
 
 interface ScoredRecommendation {
   business_id: string;
@@ -20,15 +22,17 @@ interface UserRatings {
 export class WeightedHybridRecommender extends HybridRecommender {
   private readonly minScore: number;
   private readonly maxScore: number;
+  private userRatings: Map<string, UserRatings>;
 
   constructor(
     weights: HybridWeights,
     minScore: number = 1,
     maxScore: number = 5
   ) {
-    super(weights);
+    super(weights, minScore, maxScore);
     this.minScore = minScore;
     this.maxScore = maxScore;
+    this.userRatings = new Map();
   }
 
   /**
@@ -37,6 +41,7 @@ export class WeightedHybridRecommender extends HybridRecommender {
   private convertToRatingMap(ratings: UserRatings): Map<string, number> {
     const ratingMap = new Map<string, number>();
     Object.entries(ratings).forEach(([businessId, rating]) => {
+      this.validateRating(rating);
       ratingMap.set(businessId, rating);
     });
     return ratingMap;
@@ -53,6 +58,36 @@ export class WeightedHybridRecommender extends HybridRecommender {
   }
 
   /**
+   * Get user ratings
+   */
+  private async getUserRatings(userId: string): Promise<Map<string, number>> {
+    if (!this.userRatings.has(userId)) {
+      throw new Error(ERRORS.INVALID_USER);
+    }
+    return this.convertToRatingMap(this.userRatings.get(userId)!);
+  }
+
+  /**
+   * Initialize with data
+   */
+  public async initialize(
+    restaurants: Restaurant[],
+    reviews: Review[],
+    ratings: Rating[]
+  ): Promise<void> {
+    await super.initialize(restaurants, reviews, ratings);
+
+    // Build user ratings map
+    this.userRatings.clear();
+    ratings.forEach(rating => {
+      if (!this.userRatings.has(rating.user_id)) {
+        this.userRatings.set(rating.user_id, {});
+      }
+      this.userRatings.get(rating.user_id)![rating.business_id] = rating.rating;
+    });
+  }
+
+  /**
    * Combine recommendations from multiple sources
    */
   private async getCombinedRecommendations(
@@ -64,9 +99,10 @@ export class WeightedHybridRecommender extends HybridRecommender {
     // Get content-based recommendations
     if (this.contentRecommender && this.weights.content_based > 0) {
       try {
+        const userRatings = await this.getUserRatings(userId);
         const contentRecs = await this.contentRecommender.getRecommendations(
           userId,
-          this.convertToRatingMap({ [userId]: 0 }), // Dummy ratings map
+          userRatings,
           topN
         );
         const normalizedScores = this.normalizeScores(contentRecs.scores);
@@ -148,7 +184,7 @@ export class WeightedHybridRecommender extends HybridRecommender {
       return {
         recommendations: [],
         scores: [],
-        explanation: 'No recommendations available from any source',
+        explanation: ERRORS.NO_RECOMMENDATIONS,
         method: 'weighted-hybrid',
         logs: this.getFormattedLogs()
       };
@@ -183,6 +219,20 @@ export class WeightedHybridRecommender extends HybridRecommender {
   ): Promise<string> {
     const explanations: string[] = [];
 
+    // Get content-based explanation
+    if (this.contentRecommender && this.weights.content_based > 0) {
+      try {
+        // Handle case where getRecommendationExplanation might not exist
+        const contentExplanation = await (this.contentRecommender as any)
+          .getRecommendationExplanation?.(userId, businessId);
+        if (contentExplanation) {
+          explanations.push(contentExplanation);
+        }
+      } catch (error) {
+        this.log(`Content-based explanation error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'warning');
+      }
+    }
+
     // Get collaborative filtering explanation
     if (this.collaborativeRecommender && this.weights.collaborative > 0) {
       try {
@@ -211,7 +261,7 @@ export class WeightedHybridRecommender extends HybridRecommender {
     }
 
     // Combine explanations
-    return explanations.join(' Additionally, ');
+    return utils.combineExplanations(explanations);
   }
 
   /**

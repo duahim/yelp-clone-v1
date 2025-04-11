@@ -3,12 +3,14 @@
 import { useState, useEffect } from "react"
 import { Bookmark } from "lucide-react"
 import { getUserSavedRestaurants } from "@/lib/user-interactions"
-import { Restaurant, initializeRestaurants } from "@/data/restaurantsFromCsv"
+import { Restaurant, fetchRestaurants } from "@/data/restaurantsFromCsv"
 import {
   getContentBasedRecommendations,
   getCollaborativeFilteringRecommendations,
   getMatrixFactorizationRecommendations,
   getSimilarUsers,
+  getHybridRecommendations,
+  getKMeansRecommendations,
 } from "@/lib/recommendation-models"
 import { RestaurantListItem } from "@/components/restaurant-list-item"
 import UserListItem from "@/components/user-list-item"
@@ -18,13 +20,13 @@ import RecommendationLogs from "@/components/recommendation-logs"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 
-type RecommendationAlgorithm = "content-based" | "collaborative" | "matrix";
+type RecommendationAlgorithm = "content-based" | "collaborative" | "matrix" | "hybrid" | "kmeans";
 
 export default function SavedPageClient({ initialRestaurants }: { initialRestaurants: Restaurant[] }) {
   // Initialize global restaurants data
   useEffect(() => {
     if (initialRestaurants && initialRestaurants.length > 0) {
-      initializeRestaurants(initialRestaurants);
+      fetchRestaurants();
     }
   }, [initialRestaurants]);
 
@@ -123,6 +125,12 @@ export default function SavedPageClient({ initialRestaurants }: { initialRestaur
         case "matrix":
           recs = getMatrixFactorizationRecommendations(userRestaurants, initialRestaurants);
           break;
+        case "hybrid":
+          recs = await getHybridRecommendations(userRestaurants, initialRestaurants);
+          break;
+        case "kmeans":
+          recs = await getKMeansRecommendations(userRestaurants, initialRestaurants);
+          break;
         default:
           recs = await getContentBasedRecommendations(userRestaurants, initialRestaurants);
       }
@@ -157,10 +165,12 @@ export default function SavedPageClient({ initialRestaurants }: { initialRestaur
         </h1>
 
         <Tabs defaultValue="content-based" onValueChange={handleTabChange} className="mb-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="content-based">Content-Based</TabsTrigger>
-            <TabsTrigger value="collaborative">Collaborative Filtering</TabsTrigger>
-            <TabsTrigger value="matrix">Matrix Factorization</TabsTrigger>
+          <TabsList className="flex flex-row w-full overflow-x-auto space-x-2">
+            <TabsTrigger value="content-based" className="flex-1 min-w-max">Content-Based</TabsTrigger>
+            <TabsTrigger value="collaborative" className="flex-1 min-w-max">Collaborative Filtering</TabsTrigger>
+            <TabsTrigger value="matrix" className="flex-1 min-w-max">Matrix Factorization</TabsTrigger>
+            <TabsTrigger value="hybrid" className="flex-1 min-w-max">Hybrid</TabsTrigger>
+            <TabsTrigger value="kmeans" className="flex-1 min-w-max">K-Means</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -280,6 +290,10 @@ function getAlgorithmDescription(algorithm: string) {
       return "similar users"
     case "matrix":
       return "latent factors"
+    case "hybrid":
+      return "hybrid algorithm"
+    case "kmeans":
+      return "k-means clustering"
     default:
       return "your preferences"
   }

@@ -4,11 +4,13 @@ import {
   Review,
   RecommendationResult,
   LogEntry,
-  HybridWeights
+  HybridWeights,
+  HybridStats
 } from '../types';
 import { ContentBasedRecommender } from '../level1_content/base';
 import { CollaborativeFilteringRecommender } from '../level2_cf/base';
 import { MatrixFactorizationRecommender } from '../level3_matrix/base';
+import { DEFAULT_MIN_RATING, DEFAULT_MAX_RATING, ERRORS, utils } from './index';
 
 export abstract class HybridRecommender {
   protected contentRecommender: ContentBasedRecommender | null;
@@ -16,20 +18,26 @@ export abstract class HybridRecommender {
   protected matrixRecommender: MatrixFactorizationRecommender | null;
   protected weights: HybridWeights;
   protected logs: LogEntry[];
+  protected readonly minRating: number;
+  protected readonly maxRating: number;
 
-  constructor(weights: HybridWeights) {
+  constructor(
+    weights: HybridWeights,
+    minRating: number = DEFAULT_MIN_RATING,
+    maxRating: number = DEFAULT_MAX_RATING
+  ) {
     this.contentRecommender = null;
     this.collaborativeRecommender = null;
     this.matrixRecommender = null;
-    this.weights = weights;
+    this.weights = utils.normalizeWeights(weights);
     this.logs = [];
+    this.minRating = minRating;
+    this.maxRating = maxRating;
 
-    // Normalize weights to sum to 1
-    const sum = Object.values(weights).reduce((a, b) => a + b, 0);
-    if (sum > 0) {
-      Object.keys(weights).forEach(key => {
-        this.weights[key as keyof HybridWeights] /= sum;
-      });
+    // Validate weights
+    const sum = Object.values(this.weights).reduce((a, b) => a + b, 0);
+    if (Math.abs(sum - 1) > 0.0001) {
+      throw new Error(ERRORS.INVALID_WEIGHTS);
     }
   }
 
@@ -45,6 +53,13 @@ export abstract class HybridRecommender {
     return this.getLogs().map(log => 
       `[${log.timestamp}] ${log.level.toUpperCase()}: ${log.message}`
     );
+  }
+
+  /**
+   * Validate rating is within valid range
+   */
+  protected validateRating(rating: number): void {
+    utils.validateRating(rating, this.minRating, this.maxRating);
   }
 
   /**
@@ -80,6 +95,9 @@ export abstract class HybridRecommender {
     ratings: Rating[]
   ): Promise<void> {
     this.log('Initializing hybrid recommender...');
+
+    // Validate ratings
+    ratings.forEach(rating => this.validateRating(rating.rating));
 
     try {
       // Initialize content-based recommender if available
@@ -144,12 +162,7 @@ export abstract class HybridRecommender {
     Object.assign(this.weights, newWeights);
 
     // Normalize weights to sum to 1
-    const sum = Object.values(this.weights).reduce((a, b) => a + b, 0);
-    if (sum > 0) {
-      Object.keys(this.weights).forEach(key => {
-        this.weights[key as keyof HybridWeights] /= sum;
-      });
-    }
+    this.weights = utils.normalizeWeights(this.weights);
 
     this.log('Weights updated and normalized');
   }
@@ -171,32 +184,48 @@ export abstract class HybridRecommender {
   /**
    * Get statistics about the hybrid recommender
    */
-  public getStats(): {
-    activeRecommenders: string[];
-    weights: HybridWeights;
-    contentStats?: any;
-    collaborativeStats?: any;
-    matrixStats?: any;
-  } {
-    const stats: any = {
+  public getStats(): HybridStats {
+    const stats: HybridStats = {
       activeRecommenders: [],
       weights: this.weights
     };
 
     if (this.contentRecommender && this.weights.content_based > 0) {
       stats.activeRecommenders.push('content-based');
-      // Content-based recommenders don't have standard stats
+      // Content-based recommender stats are optional
+      try {
+        const contentStats = (this.contentRecommender as any).getStats?.();
+        if (contentStats) {
+          stats.contentStats = {
+            numProfiles: contentStats.numProfiles || 0,
+            avgProfileSize: contentStats.avgProfileSize || 0
+          };
+        }
+      } catch (error) {
+        this.log('Failed to get content-based recommender stats', 'warning');
+      }
     }
 
     if (this.collaborativeRecommender && this.weights.collaborative > 0) {
       stats.activeRecommenders.push('collaborative');
-      stats.collaborativeStats = this.collaborativeRecommender.getStats();
+      const cfStats = this.collaborativeRecommender.getStats();
+      stats.collaborativeStats = {
+        numUsers: cfStats.numUsers,
+        numItems: cfStats.numItems,
+        sparsity: cfStats.sparsity
+      };
     }
 
     if (this.matrixRecommender && this.weights.matrix_factorization && 
         this.weights.matrix_factorization > 0) {
       stats.activeRecommenders.push('matrix-factorization');
-      stats.matrixStats = this.matrixRecommender.getStats();
+      const mfStats = this.matrixRecommender.getStats();
+      stats.matrixStats = {
+        numUsers: mfStats.numUsers,
+        numItems: mfStats.numItems,
+        numFactors: mfStats.numFactors,
+        sparsity: mfStats.sparsity
+      };
     }
 
     return stats;

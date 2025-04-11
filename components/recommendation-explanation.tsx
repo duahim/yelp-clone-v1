@@ -72,6 +72,10 @@ function getAlgorithmTitle(algorithm: string): string {
       return "Collaborative Filtering"
     case "matrix":
       return "Matrix Factorization"
+    case "hybrid":
+      return "Hybrid Recommendation"
+    case "kmeans":
+      return "K-Means Clustering"
     default:
       return "Recommendation System"
   }
@@ -85,6 +89,10 @@ function getAlgorithmShortDescription(algorithm: string): string {
       return "Recommendations based on what similar users with similar tastes have enjoyed."
     case "matrix":
       return "Advanced recommendations using latent factors and patterns from user-restaurant interactions."
+    case "hybrid":
+      return "Combined recommendations using content-based, collaborative filtering, and matrix factorization approaches."
+    case "kmeans":
+      return "Recommendations based on clustering similar users and restaurants into groups."
     default:
       return "Personalized recommendations based on your preferences."
   }
@@ -98,6 +106,10 @@ function getAlgorithmExplanation(algorithm: string): string {
       return "Collaborative filtering finds users similar to you, then recommends restaurants they enjoyed that you haven't tried yet. It's based on the idea that people with similar tastes will like similar restaurants."
     case "matrix":
       return "Matrix factorization discovers hidden patterns in user-restaurant interactions by decomposing the user-item matrix into latent factors. This captures deeper relationships beyond simple similarities, potentially leading to more diverse recommendations."
+    case "hybrid":
+      return "Our hybrid approach combines the strengths of content-based filtering, collaborative filtering, and matrix factorization. It uses weighted combinations of recommendations from each method to provide more diverse and accurate suggestions. The system adapts the weights based on the user's interaction history and the quality of each method's predictions."
+    case "kmeans":
+      return "K-means clustering groups similar users and restaurants into clusters based on their features and interactions. Recommendations are made by finding restaurants that are popular within the user's cluster and similar clusters. This approach helps discover new restaurants that align with the user's preferences while maintaining diversity."
     default:
       return "This algorithm provides personalized recommendations based on your preferences and behavior."
   }
@@ -153,6 +165,20 @@ function getAlgorithmCons(algorithm: string): string[] {
         "Harder to explain recommendations",
         "Requires more data to be effective",
         "Can be sensitive to parameter choices"
+      ]
+    case "hybrid":
+      return [
+        "More complex to implement and maintain",
+        "Requires careful weight tuning",
+        "Computationally intensive",
+        "May be harder to explain to users"
+      ]
+    case "kmeans":
+      return [
+        "Sensitive to initial cluster centers",
+        "May not capture complex user preferences",
+        "Requires careful selection of k",
+        "Can be affected by outliers"
       ]
     default:
       return ["May not always match your expectations", "Requires sufficient data to be effective"]

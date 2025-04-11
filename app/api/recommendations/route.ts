@@ -166,7 +166,36 @@ export async function POST(request: Request) {
     logSessionStart();
     serverLog('POST request to recommendations API', 'info');
     
-    const { userId, userRatings, algorithm, forceRefresh } = await request.json();
+    const body = await request.json();
+    const { userId, algorithm, userRatings, forceRefresh } = body;
+
+    // Validate input
+    if (!userId || !algorithm || !userRatings) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required parameters' },
+        { status: 400 }
+      );
+    }
+
+    // Check cache first if not forcing refresh
+    if (!forceRefresh) {
+      const cachedData = getCachedRecommendations(userId, algorithm);
+      if (cachedData) {
+        // Check cache age (invalidate after 24 hours)
+        const cacheAge = new Date().getTime() - new Date(cachedData.cachedAt).getTime();
+        const maxCacheAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        
+        if (cacheAge < maxCacheAge) {
+          serverLog(`Using cached recommendations for user ${userId} using ${algorithm} algorithm`, 'info');
+          return NextResponse.json({
+            ...cachedData,
+            fromCache: true
+          });
+        } else {
+          serverLog(`Cache expired for user ${userId} using ${algorithm} algorithm`, 'info');
+        }
+      }
+    }
     
     serverLog(`Processing recommendations for user ${userId} using ${algorithm} algorithm`, 'info');
     serverLog(`User ratings: ${JSON.stringify(userRatings)}`, 'debug');
@@ -597,6 +626,325 @@ export async function POST(request: Request) {
             logs: ['Matrix factorization algorithm encountered an error']
           };
         }
+        
+        break;
+      }
+      
+      case "hybrid": {
+        serverLog('Using hybrid recommendation algorithm', 'info');
+        
+        // Generate recommendations from all three algorithms
+        let contentBasedResult;
+        let collaborativeResult;
+        let matrixResult;
+        
+        // Content-based recommendations
+        try {
+          serverLog('Getting content-based recommendations for hybrid', 'info');
+          await initializeContentRecommender();
+          contentBasedResult = await contentRecommender.getRecommendations(
+            userId,
+            new Map(userRatings.map((r: any) => [r.business_id || r.restaurant_id, r.rating])),
+            RECOMMENDATION_CONFIG.recommendationsPerPage
+          );
+        } catch (error) {
+          serverLog(`Error getting content-based recommendations for hybrid: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+          contentBasedResult = { recommendations: [], explanation: 'Failed to generate content-based recommendations', logs: [] };
+        }
+        
+        // Collaborative filtering recommendations
+        try {
+          serverLog('Getting collaborative filtering recommendations for hybrid', 'info');
+          
+          // Load ratings from CSV to find similar users
+          const filePath = path.join(process.cwd(), 'data/processed/ratings_processed.csv');
+          if (fs.existsSync(filePath)) {
+            // First, get all businesses rated by the target user
+            const userRatedBusinessIds = new Set(userRatings.map((r: any) => r.business_id));
+            
+            const fileContent = fs.readFileSync(filePath, 'utf8');
+            const allRatings = parse(fileContent, { columns: true });
+            
+            // Find users who have rated the same businesses as our target user
+            const similarUserIds = new Set<string>();
+            const userBusinessRatings = new Map<string, Set<string>>();
+            
+            // First pass: find users who have rated the same businesses
+            allRatings.forEach((rating: any) => {
+              if (userRatedBusinessIds.has(rating.business_id)) {
+                similarUserIds.add(rating.user_id);
+                if (!userBusinessRatings.has(rating.user_id)) {
+                  userBusinessRatings.set(rating.user_id, new Set());
+                }
+                userBusinessRatings.get(rating.user_id)!.add(rating.business_id);
+              }
+            });
+            
+            // Sort similar users by number of common ratings and take top N
+            const topSimilarUsers = Array.from(similarUserIds)
+              .map(userId => ({
+                userId,
+                commonRatings: userBusinessRatings.get(userId)!.size
+              }))
+              .sort((a, b) => b.commonRatings - a.commonRatings)
+              .slice(0, 20)
+              .map(u => u.userId);
+            
+            // Second pass: collect ratings from similar users
+            const relevantRatings: any[] = [];
+            
+            // First add the target user's ratings
+            userRatings.forEach((rating: any) => {
+              relevantRatings.push({
+                user_id: userId,
+                business_id: rating.business_id,
+                rating: parseFloat(rating.rating) || 3
+              });
+            });
+            
+            // Then add ratings from similar users, with a limit
+            let ratingsCount = 0;
+            const MAX_RATINGS = 2000;
+            allRatings.forEach((rating: any) => {
+              if (ratingsCount >= MAX_RATINGS) return;
+              if (topSimilarUsers.includes(rating.user_id)) {
+                relevantRatings.push({
+                  user_id: rating.user_id,
+                  business_id: rating.business_id,
+                  rating: parseFloat(rating.rating) || 3
+                });
+                ratingsCount++;
+              }
+            });
+            
+            // Initialize collaborative recommender
+            await collaborativeRecommender.initialize(relevantRatings);
+            collaborativeResult = await collaborativeRecommender.getRecommendations(
+              userId,
+              RECOMMENDATION_CONFIG.recommendationsPerPage
+            );
+          } else {
+            throw new Error('Ratings data not available');
+          }
+        } catch (error) {
+          serverLog(`Error getting collaborative filtering recommendations for hybrid: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+          collaborativeResult = { recommendations: [], explanation: 'Failed to generate collaborative filtering recommendations', logs: [] };
+        }
+        
+        // Matrix factorization recommendations
+        try {
+          serverLog('Getting matrix factorization recommendations for hybrid', 'info');
+          
+          // CRITICAL FIX: The SVD model needs more item data than just the user's ratings
+          const allBusinesses = loadAllBusinessesFromCsv();
+          
+          // Generate training data with additional ratings to expand the item universe
+          const additionalRatings: Rating[] = [];
+          
+          // Get the businesses the user has already rated
+          const userRatedBusinessIds = new Set(userRatings.map((r: any) => r.business_id));
+          
+          // Group all businesses by category for more diverse sampling
+          const categoriesMap = new Map<string, any[]>();
+          const citiesMap = new Map<string, any[]>();
+          
+          // Process all businesses to create category and city maps
+          allBusinesses.forEach((business: any) => {
+            if (userRatedBusinessIds.has(business.business_id)) return;
+            
+            if (business.categories && business.categories.length > 0) {
+              business.categories.forEach((category: string) => {
+                if (!categoriesMap.has(category)) {
+                  categoriesMap.set(category, []);
+                }
+                categoriesMap.get(category)!.push(business);
+              });
+            }
+            
+            const city = business.location?.city || "Unknown";
+            if (!citiesMap.has(city)) {
+              citiesMap.set(city, []);
+            }
+            citiesMap.get(city)!.push(business);
+          });
+          
+          // Get a diverse set of businesses
+          const selectedBusinesses = new Set<string>();
+          
+          // First, select businesses from the same categories as what the user has liked
+          const userLikedCategories = new Set<string>();
+          userRatings.forEach((rating: any) => {
+            const business = allBusinesses.find((b: any) => b.business_id === rating.business_id);
+            if (business && business.categories) {
+              business.categories.forEach((category: string) => userLikedCategories.add(category));
+            }
+          });
+          
+          // Add mock ratings
+          const mockUsers = ['mock_user_positive', 'mock_user_neutral', 'mock_user_negative'];
+          const mockUserBias = [4.5, 3, 1.5];
+          
+          Array.from(selectedBusinesses).forEach((businessId, index) => {
+            const mockUserIndex = index % mockUsers.length;
+            const mockUserId = mockUsers[mockUserIndex];
+            const baseBias = mockUserBias[mockUserIndex];
+            
+            const rating = Math.max(1, Math.min(5, baseBias + (Math.random() - 0.5)));
+            
+            additionalRatings.push({
+              user_id: mockUserId,
+              business_id: businessId,
+              rating
+            });
+          });
+          
+          // Train the model with combined ratings
+          const combinedRatings = [...userRatings, ...additionalRatings];
+          await matrixRecommender.train(combinedRatings, RECOMMENDATION_CONFIG.matrix.iterations);
+          
+          // Get recommendations
+          const requestedRecommendations = RECOMMENDATION_CONFIG.recommendationsPerPage * 3;
+          matrixResult = await matrixRecommender.getRecommendations(
+            userId,
+            requestedRecommendations
+          );
+        } catch (error) {
+          serverLog(`Error getting matrix factorization recommendations for hybrid: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+          matrixResult = { recommendations: [], explanation: 'Failed to generate matrix factorization recommendations', logs: [] };
+        }
+        
+        // Now combine all recommendations with weights
+        serverLog('Combining recommendations for hybrid model', 'info');
+        
+        // Default weights for combination
+        const weights = {
+          contentBased: 0.33,
+          collaborative: 0.33,
+          matrix: 0.34
+        };
+        
+        // Map of business IDs to combined scores
+        const combinedScores = new Map<string, { score: number, sources: string[] }>();
+        
+        // Function to normalize recommendation scores from 0-1
+        const normalizeScores = (recommendations: any[]) => {
+          if (!recommendations || recommendations.length === 0) return [];
+          
+          // Find max score for normalization
+          let maxScore = 0;
+          recommendations.forEach((rec: any) => {
+            const score = typeof rec === 'object' ? (rec.score || 0) : 0;
+            maxScore = Math.max(maxScore, score);
+          });
+          
+          // Normalize all scores from 0-1
+          return recommendations.map((rec: any) => {
+            if (typeof rec === 'string') {
+              return { business_id: rec, score: 1 };
+            } else if (typeof rec === 'object') {
+              const business_id = rec.business_id || rec.id;
+              const normalizedScore = maxScore > 0 ? (rec.score || 0) / maxScore : 1;
+              return { business_id, score: normalizedScore };
+            }
+            return null;
+          }).filter(Boolean);
+        };
+        
+        // Add content-based recommendations to combined scores
+        const normalizedContentBased = normalizeScores(contentBasedResult.recommendations);
+        normalizedContentBased.forEach((rec: any) => {
+          if (!rec.business_id) return;
+          
+          if (!combinedScores.has(rec.business_id)) {
+            combinedScores.set(rec.business_id, { score: 0, sources: [] });
+          }
+          
+          const entry = combinedScores.get(rec.business_id)!;
+          entry.score += rec.score * weights.contentBased;
+          entry.sources.push('content');
+        });
+        
+        // Add collaborative filtering recommendations to combined scores
+        const normalizedCollaborative = normalizeScores(collaborativeResult.recommendations);
+        normalizedCollaborative.forEach((rec: any) => {
+          if (!rec.business_id) return;
+          
+          if (!combinedScores.has(rec.business_id)) {
+            combinedScores.set(rec.business_id, { score: 0, sources: [] });
+          }
+          
+          const entry = combinedScores.get(rec.business_id)!;
+          entry.score += rec.score * weights.collaborative;
+          entry.sources.push('collaborative');
+        });
+        
+        // Add matrix factorization recommendations to combined scores
+        const normalizedMatrix = normalizeScores(matrixResult.recommendations);
+        normalizedMatrix.forEach((rec: any) => {
+          if (!rec.business_id) return;
+          
+          if (!combinedScores.has(rec.business_id)) {
+            combinedScores.set(rec.business_id, { score: 0, sources: [] });
+          }
+          
+          const entry = combinedScores.get(rec.business_id)!;
+          entry.score += rec.score * weights.matrix;
+          entry.sources.push('matrix');
+        });
+        
+        // Convert the combined scores map to an array of recommendations
+        const combinedRecommendations = Array.from(combinedScores.entries())
+          .map(([business_id, { score, sources }]) => ({
+            business_id,
+            id: business_id, // For client compatibility
+            score,
+            sources // Track which algorithms contributed to this recommendation
+          }))
+          .sort((a, b) => b.score - a.score) // Sort by score
+          .slice(0, RECOMMENDATION_CONFIG.recommendationsPerPage); // Limit to desired number
+        
+        // Filter out businesses that the user has already liked
+        const likedBusinessIds = new Set(userRatings.map((r: any) => r.business_id));
+        serverLog(`Filtering out ${likedBusinessIds.size} already liked businesses from hybrid recommendations`, 'info');
+        
+        // Filter recommendations
+        const originalCount = combinedRecommendations.length;
+        const filteredRecommendations = combinedRecommendations.filter((rec: any) => {
+          return !likedBusinessIds.has(rec.business_id);
+        });
+        
+        serverLog(`Filtered out ${originalCount - filteredRecommendations.length} already liked items from hybrid recommendations`, 'info');
+        
+        // Construct the final result
+        result = {
+          recommendations: filteredRecommendations,
+          explanation: `Hybrid recommendations using a weighted combination of content-based (${weights.contentBased * 100}%), collaborative filtering (${weights.collaborative * 100}%), and matrix factorization (${weights.matrix * 100}%)`,
+          logs: [
+            `Combined ${normalizedContentBased.length} content-based, ${normalizedCollaborative.length} collaborative, and ${normalizedMatrix.length} matrix factorization recommendations`,
+            `Generated ${filteredRecommendations.length} hybrid recommendations after filtering`
+          ]
+        };
+        
+        break;
+      }
+      
+      case "kmeans": {
+        serverLog('Using k-means clustering algorithm', 'info');
+        serverLog('K-means clustering algorithm is not yet implemented', 'warn');
+        
+        // For now, return a message that k-means is not yet implemented
+        // In a real implementation, we would:
+        // 1. Load user and business data
+        // 2. Extract features for clustering
+        // 3. Run k-means clustering
+        // 4. Find the user's cluster
+        // 5. Recommend items from the same cluster that the user hasn't rated
+        
+        result = {
+          recommendations: [],
+          explanation: "K-means clustering recommendations are coming soon. For now, try another algorithm.",
+          logs: ["K-means clustering algorithm is not yet implemented"]
+        };
         
         break;
       }

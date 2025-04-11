@@ -14,13 +14,17 @@ export interface RecommendationLogs {
   contentBased: string[];
   collaborative: string[];
   matrix: string[];
+  hybrid: string[];
+  kmeans: string[];
 }
 
 // Initialize and export the recommendation logs
 export const recommendationLogs: RecommendationLogs = {
   contentBased: [],
   collaborative: ['Process logs not available for collaborative filtering'],
-  matrix: ['Process logs not available for matrix factorization']
+  matrix: ['Process logs not available for matrix factorization'],
+  hybrid: ['Process logs not available for hybrid recommendations'],
+  kmeans: ['Process logs not available for k-means clustering']
 };
 
 // Initialize restaurants data
@@ -30,7 +34,7 @@ fetchRestaurants().then((data: Restaurant[]) => {
 });
 
 // Convert algorithm names from hyphenated format to camelCase
-function getAlgorithmKey(algorithm: string): 'contentBased' | 'collaborative' | 'matrix' {
+function getAlgorithmKey(algorithm: string): 'contentBased' | 'collaborative' | 'matrix' | 'hybrid' | 'kmeans' {
   switch(algorithm) {
     case 'content-based':
       return 'contentBased';
@@ -38,6 +42,10 @@ function getAlgorithmKey(algorithm: string): 'contentBased' | 'collaborative' | 
       return 'collaborative';
     case 'matrix':
       return 'matrix';
+    case 'hybrid':
+      return 'hybrid';
+    case 'kmeans':
+      return 'kmeans';
     default:
       return 'contentBased';
   }
@@ -453,5 +461,93 @@ export class MatrixRecommender {
   }
 
   // ... existing code ...
+}
+
+// Hybrid Recommendations
+export async function getHybridRecommendations(userRestaurants: Restaurant[], allRestaurants: Restaurant[]) {
+  try {
+    // Get current user ID if available
+    let userId = "";
+    try {
+      const userString = localStorage.getItem("currentUser");
+      if (userString) {
+        const user = JSON.parse(userString);
+        userId = user.user_id;
+      }
+    } catch (error) {
+      console.warn("Error getting current user:", error);
+    }
+
+    // Call the server API to get hybrid recommendations
+    const response = await fetch(`/api/recommendations/hybrid?userId=${userId}`);
+    
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const recommendations = data.recommendations || [];
+    
+    // Store the logs from the API
+    if (data.logs && Array.isArray(data.logs)) {
+      data.logs.forEach((log: string) => {
+        logStore.addLog('hybrid', log);
+      });
+    }
+    
+    // Filter out restaurants that the user already has
+    const userRestaurantIds = new Set(userRestaurants.map(r => r.id));
+    const filteredRecommendations = recommendations.filter((r: any) => !userRestaurantIds.has(r.id));
+    
+    return filteredRecommendations.slice(0, 5);
+  } catch (error) {
+    console.error("Error fetching hybrid recommendations:", error);
+    logStore.addLog('hybrid', `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return [];
+  }
+}
+
+// K-Means Clustering Recommendations
+export async function getKMeansRecommendations(userRestaurants: Restaurant[], allRestaurants: Restaurant[]) {
+  try {
+    // Get current user ID if available
+    let userId = "";
+    try {
+      const userString = localStorage.getItem("currentUser");
+      if (userString) {
+        const user = JSON.parse(userString);
+        userId = user.user_id;
+      }
+    } catch (error) {
+      console.warn("Error getting current user:", error);
+    }
+
+    // Call the server API to get k-means recommendations
+    const response = await fetch(`/api/recommendations/kmeans?userId=${userId}`);
+    
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const recommendations = data.recommendations || [];
+    
+    // Store the logs from the API
+    if (data.logs && Array.isArray(data.logs)) {
+      data.logs.forEach((log: string) => {
+        logStore.addLog('kmeans', log);
+      });
+    }
+    
+    // Filter out restaurants that the user already has
+    const userRestaurantIds = new Set(userRestaurants.map(r => r.id));
+    const filteredRecommendations = recommendations.filter((r: any) => !userRestaurantIds.has(r.id));
+    
+    return filteredRecommendations.slice(0, 5);
+  } catch (error) {
+    console.error("Error fetching k-means recommendations:", error);
+    logStore.addLog('kmeans', `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return [];
+  }
 }
 

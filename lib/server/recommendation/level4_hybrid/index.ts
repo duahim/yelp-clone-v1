@@ -3,7 +3,8 @@ import {
   RecommendationResult,
   Rating,
   Restaurant,
-  Review
+  Review,
+  HybridStats
 } from '../types';
 export * from './base';
 export * from './weighted';
@@ -75,17 +76,20 @@ export type {
   RecommendationResult,
   Rating,
   Restaurant,
-  Review
+  Review,
+  HybridStats
 } from '../types';
 
 // Export factory types
 export type { HybridMethod } from './factory';
 
 // Export constants
+export const DEFAULT_MIN_RATING = 1;
+export const DEFAULT_MAX_RATING = 5;
 export const DEFAULT_WEIGHTS: HybridWeights = {
-  content_based: 0.4,
-  collaborative: 0.3,
-  matrix_factorization: 0.3
+  content_based: 0.33,
+  collaborative: 0.33,
+  matrix_factorization: 0.34
 };
 
 export const DEFAULT_SWITCHING_CRITERIA = {
@@ -101,7 +105,9 @@ export const ERRORS = {
   INITIALIZATION_FAILED: 'Failed to initialize one or more recommenders',
   METHOD_UNAVAILABLE: 'Requested recommendation method is not available',
   INVALID_USER: 'Invalid user ID provided',
-  INVALID_BUSINESS: 'Invalid business ID provided'
+  INVALID_BUSINESS: 'Invalid business ID provided',
+  INVALID_RATING: 'Rating is outside valid range',
+  NO_RECOMMENDATIONS: 'No recommendations available from any source'
 } as const;
 
 // Export metric names
@@ -110,7 +116,10 @@ export const METRICS = {
   METHOD_CONTRIBUTION: 'Method Contribution Ratio',
   SWITCHING_RATE: 'Method Switching Rate',
   FALLBACK_RATE: 'Fallback Rate',
-  COLD_START_RATIO: 'Cold Start User Ratio'
+  COLD_START_RATIO: 'Cold Start User Ratio',
+  CONTENT_PROFILES: 'Number of Content Profiles',
+  COLLABORATIVE_USERS: 'Number of Collaborative Users',
+  MATRIX_FACTORS: 'Number of Matrix Factors'
 } as const;
 
 // Export utility functions
@@ -151,5 +160,18 @@ export const utils = {
     return explanations
       .filter(e => e)
       .join(' Additionally, ');
+  },
+
+  /**
+   * Validate rating is within valid range
+   */
+  validateRating(
+    rating: number,
+    minRating: number = DEFAULT_MIN_RATING,
+    maxRating: number = DEFAULT_MAX_RATING
+  ): void {
+    if (rating < minRating || rating > maxRating) {
+      throw new Error(`${ERRORS.INVALID_RATING} [${minRating}, ${maxRating}]`);
+    }
   }
 };

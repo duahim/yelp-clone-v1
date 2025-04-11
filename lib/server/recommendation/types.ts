@@ -71,6 +71,26 @@ export interface HybridWeights {
   matrix_factorization?: number;
 }
 
+export interface HybridStats {
+  activeRecommenders: string[];
+  weights: HybridWeights;
+  contentStats?: {
+    numProfiles: number;
+    avgProfileSize: number;
+  };
+  collaborativeStats?: {
+    numUsers: number;
+    numItems: number;
+    sparsity: number;
+  };
+  matrixStats?: {
+    numUsers: number;
+    numItems: number;
+    numFactors: number;
+    sparsity: number;
+  };
+}
+
 // Level 5: Clustering Types
 export interface ClusteringResult {
   cluster_id: number;
