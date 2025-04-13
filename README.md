@@ -1,192 +1,100 @@
-# Yelp Clone - Restaurant Recommendation System
+# Yelp Clone Next.js Application
 
-A modern web application built with Next.js that provides restaurant recommendations using machine learning techniques. This project implements a comprehensive recommendation system with multiple algorithms and real-time user interactions. CS 6140 - ML - Spring 2025 Project.
+A Yelp clone built with Next.js, TypeScript, and Tailwind CSS, featuring user authentication, restaurant browsing, and personalized recommendations using multiple recommendation algorithms.
 
 ## Features
 
-### Core Features
-- Restaurant search and discovery with category-based filtering
-- Personalized recommendations using multiple ML algorithms
-- User authentication and profile management
-- Restaurant details and reviews
-- Save and like restaurants with real-time updates
-- Recommendation explanations and process logging
-- Modern UI with dark/light theme support
+- **Restaurant Discovery**: Browse restaurants by category or search for specific restaurants
+- **Personalized Recommendations**: Three different recommendation algorithms
+  - Content-based filtering
+  - Collaborative filtering
+  - Matrix factorization
+- **User Profiles**: User login system with personalized recommendations
+- **Interactive UI**: Like and save restaurants to your profile
+- **Restaurant Details**: View detailed information about each restaurant
 
-### Recommendation System
-The application implements a sophisticated multi-level recommendation system:
+## Recommendation System
 
-1. **Content-Based Filtering (Level 1)**
-   - TF-IDF based recommendations
-   - Latent Semantic Analysis (LSA)
-   - Sentence Transformer embeddings
-   - Uses restaurant features, reviews, and sentiment analysis
-   - Real-time recommendation process logging
+The application features a robust recommendation system with three different algorithms:
 
-2. **Collaborative Filtering (Level 2)**
-   - User-based collaborative filtering
-   - Item-based collaborative filtering with fallback mechanism
-   - Similarity caching for performance optimization
-   - Dynamic threshold adjustment based on data sparsity
-   - Similar users display with similarity scores
+### Content-Based Filtering
 
-3. **Matrix Factorization (Level 3)**
-   - SVD implementation with user/item biases
-   - SVD with PCA dimensionality reduction
-   - Latent factor-based user similarity
-   - Advanced training data selection
-   - Real-time recommendation updates
+Recommends restaurants similar to ones you've liked based on attributes like:
+- Cuisine type
+- Price range
+- Location
+- Other restaurant attributes
 
-4. **Hybrid Methods (Level 4)**
-   - Weighted hybrid combining multiple methods
-   - Switching hybrid for dynamic method selection
-   - Score normalization and combination
-   - Source contribution tracking
+This approach creates a personalized experience based on the specific attributes of restaurants you've enjoyed.
 
-5. **Clustering (Level 5)**
-   - K-means clustering implementation
-   - Automatic cluster size optimization
-   - Feature-based restaurant grouping
-   - Cluster rebalancing
+### Collaborative Filtering
 
-### Data Processing
-- CSV-based data management for users, businesses, and ratings
-- Real-time data synchronization between server and client
-- Efficient caching mechanisms for recommendations
-- Automatic data refresh on user interactions
+Recommends restaurants based on what similar users have liked:
+- Identifies users with similar tastes
+- Suggests restaurants they've rated highly that you haven't tried
+- Benefits from the "wisdom of the crowd"
 
-## Tech Stack
+The system finds users with similar preferences and leverages their experiences to discover new restaurants for you.
 
-### Frontend
-- Next.js 15
-- React 19
-- TypeScript
-- Tailwind CSS
-- Radix UI components
-- Recharts for data visualization
+### Matrix Factorization
 
-### Backend
-- Next.js API routes
-- Python ML libraries (via requirements.txt)
-  - scikit-learn
-  - sentence-transformers
-  - pandas
-  - textblob
-  - numpy
-  - torch
-  - scipy
-  - matplotlib
+A more advanced algorithm that:
+- Discovers hidden patterns in user-restaurant interactions
+- Decomposes the user-item matrix into latent factors
+- Captures more complex relationships than simpler methods
+- Balances personalization with discovery of new interests
 
-### Data Management
-- CSV-based data storage
-- Local storage for user preferences
-- Server-side caching for recommendations
-- Real-time data synchronization
+## Technical Implementation
 
-## Project Structure
+This application demonstrates several advanced Next.js patterns:
 
-```
-yelp-clone-v1/
-├── app/                    # Next.js app directory
-│   ├── api/               # API routes
-│   │   ├── recommendations/  # Recommendation endpoints
-│   │   ├── restaurants/     # Restaurant data endpoints
-│   │   └── users/          # User management endpoints
-│   ├── restaurant/        # Restaurant pages
-│   ├── search/           # Search functionality
-│   └── my-list/          # User's saved restaurants
-├── components/            # React components
-│   ├── ui/               # Reusable UI components
-│   ├── restaurant-list-item.tsx
-│   ├── recommendation-logs.tsx
-│   └── ...
-├── config/               # Configuration files
-├── lib/                  # Utility libraries
-│   ├── server/          # Server-side utilities
-│   │   ├── recommendation/  # Recommendation algorithms
-│   │   └── utils/          # Utility functions
-│   └── liked-restaurants-manager.ts  # Like management
-├── public/              # Static assets
-├── styles/              # Global styles
-└── util/                # Utility functions
-```
+1. **App Router**: Uses the latest Next.js App Router for improved routing
+2. **Server Components**: Leverages React Server Components for improved performance
+3. **Static Generation**: Pre-renders pages at build time for faster loading
+4. **Hybrid Data Fetching**: 
+   - Uses server-side data loading for initial page loads
+   - Client-side fetching for dynamic updates after user interactions
+5. **TypeScript**: Fully typed for improved developer experience and code safety
+6. **Tailwind CSS**: Utility-first CSS framework for responsive design
+
+## Application Architecture
+
+The codebase follows a clean separation of concerns:
+
+- `app/`: Page components and routing configuration
+- `components/`: Reusable UI components
+- `lib/`: Utility functions and business logic
+  - `server/`: Server-only utilities
+  - `recommendation-models.js`: Implementation of recommendation algorithms
+  - `user-interactions.ts`: User data management
+- `data/`: Data loading and processing utilities
+- `public/`: Static assets
 
 ## Getting Started
 
-1. Clone the repository:
-   ```bash
-   git clone [repository-url]
-   cd yelp-clone-v1
-   ```
-
+1. Clone the repository
 2. Install dependencies:
    ```bash
    npm install
-   pip install -r requirements.txt
    ```
-
-3. Prepare your data:
-   - Place your Yelp dataset files in the appropriate directories:
-     - `data/processed/user_processed.csv`
-     - `data/processed/ratings_processed.csv`
-     - `data/processed/business_processed.csv`
-     - `data/processed/reviews_processed.csv`
-
-4. Run the development server:
+3. Start the development server:
    ```bash
    npm run dev
    ```
+4. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
+## Data Sources
 
-## Available Scripts
+The application uses processed Yelp data in CSV format:
+- Restaurant information
+- User profiles
+- User ratings
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run start` - Start production server
-- `npm run lint` - Run ESLint
+## Future Enhancements
 
-## Recommendation System Details
-
-### Content-Based Filtering
-- Uses TF-IDF, LSA, and Sentence Transformer methods
-- Processes restaurant features and reviews
-- Implements sentiment analysis
-- Provides detailed recommendation explanations
-
-### Collaborative Filtering
-- User-based and item-based approaches
-- Dynamic threshold adjustment
-- Similarity caching
-- Fallback mechanisms for sparse data
-
-### Matrix Factorization
-- Custom SGD implementation
-- User/item biases
-- Early stopping
-- Regularization
-- Latent factor-based user similarity
-
-### Hybrid Methods
-- Weighted combination of multiple methods
-- Score normalization
-- Source contribution tracking
-- Dynamic method selection
-
-### Clustering
-- Custom K-means implementation
-- Automatic cluster size optimization
-- Feature-based grouping
-- Rebalancing for minimum cluster size
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+Planned future improvements:
+- Real user authentication system
+- More sophisticated recommendation algorithms
+- Mobile application using React Native
+- Integration with mapping services for location-based recommendations
+- Social features for sharing and recommendations 

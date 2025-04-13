@@ -7,18 +7,25 @@ import {
   LogEntry
 } from '../types';
 import { calculatePearsonCorrelation } from '../utils/similarity';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export abstract class CollaborativeFilteringRecommender {
   protected userRatings: Map<string, Map<string, number>>;  // user_id -> (business_id -> rating)
   protected itemRatings: Map<string, Map<string, number>>;  // business_id -> (user_id -> rating)
   protected logs: LogEntry[];
   protected readonly minRatings: number;
+  // Add a cache for similarity calculations
+  protected userSimilarityCache: Map<string, Map<string, number>>;  // user_id -> (other_user_id -> similarity)
+  protected itemSimilarityCache: Map<string, Map<string, number>>;  // business_id -> (other_business_id -> similarity)
 
   constructor(minRatings: number = 1) {
     this.userRatings = new Map();
     this.itemRatings = new Map();
     this.logs = [];
     this.minRatings = minRatings;
+    this.userSimilarityCache = new Map();
+    this.itemSimilarityCache = new Map();
   }
 
   protected log(message: string, level: 'info' | 'warning' | 'error' = 'info'): void {
@@ -27,11 +34,101 @@ export abstract class CollaborativeFilteringRecommender {
   }
 
   /**
+   * Save similarity caches to disk
+   */
+  protected saveCachesToDisk(): void {
+    try {
+      const cacheDir = path.join(process.cwd(), 'cache');
+      
+      // Create cache directory if it doesn't exist
+      if (!fs.existsSync(cacheDir)) {
+        this.log('Creating cache directory', 'info');
+        fs.mkdirSync(cacheDir, { recursive: true });
+      } else {
+        this.log('Cache directory already exists', 'info');
+      }
+      
+      // Convert Map to serializable object
+      const serializeCache = (cache: Map<string, Map<string, number>>) => {
+        const obj: Record<string, Record<string, number>> = {};
+        cache.forEach((innerMap, key) => {
+          obj[key] = {};
+          innerMap.forEach((value, innerKey) => {
+            obj[key][innerKey] = value;
+          });
+        });
+        return obj;
+      };
+      
+      // Save user similarity cache
+      const userCachePath = path.join(cacheDir, 'user_similarity_cache.json');
+      const serializedUserCache = serializeCache(this.userSimilarityCache);
+      fs.writeFileSync(userCachePath, JSON.stringify(serializedUserCache, null, 2));
+      this.log(`Saved user similarity cache with ${this.userSimilarityCache.size} entries`, 'info');
+      
+      // Save item similarity cache
+      const itemCachePath = path.join(cacheDir, 'item_similarity_cache.json');
+      const serializedItemCache = serializeCache(this.itemSimilarityCache);
+      fs.writeFileSync(itemCachePath, JSON.stringify(serializedItemCache, null, 2));
+      this.log(`Saved item similarity cache with ${this.itemSimilarityCache.size} entries`, 'info');
+    } catch (error) {
+      this.log(`Error saving caches to disk: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    }
+  }
+
+  /**
+   * Load similarity caches from disk
+   */
+  protected loadCachesFromDisk(): void {
+    try {
+      const cacheDir = path.join(process.cwd(), 'cache');
+      if (!fs.existsSync(cacheDir)) {
+        this.log('Cache directory does not exist, skipping cache loading', 'info');
+        return;
+      }
+      
+      // Helper to deserialize cache from JSON
+      const deserializeCache = (obj: Record<string, Record<string, number>>): Map<string, Map<string, number>> => {
+        const cache = new Map<string, Map<string, number>>();
+        Object.entries(obj).forEach(([key, innerObj]) => {
+          const innerMap = new Map<string, number>();
+          Object.entries(innerObj).forEach(([innerKey, value]) => {
+            innerMap.set(innerKey, value);
+          });
+          cache.set(key, innerMap);
+        });
+        return cache;
+      };
+      
+      // Load user similarity cache
+      const userCachePath = path.join(cacheDir, 'user_similarity_cache.json');
+      if (fs.existsSync(userCachePath)) {
+        const userCacheData = JSON.parse(fs.readFileSync(userCachePath, 'utf8'));
+        this.userSimilarityCache = deserializeCache(userCacheData);
+        this.log(`Loaded user similarity cache with ${this.userSimilarityCache.size} entries`, 'info');
+      }
+      
+      // Load item similarity cache
+      const itemCachePath = path.join(cacheDir, 'item_similarity_cache.json');
+      if (fs.existsSync(itemCachePath)) {
+        const itemCacheData = JSON.parse(fs.readFileSync(itemCachePath, 'utf8'));
+        this.itemSimilarityCache = deserializeCache(itemCacheData);
+        this.log(`Loaded item similarity cache with ${this.itemSimilarityCache.size} entries`, 'info');
+      }
+    } catch (error) {
+      this.log(`Error loading caches from disk: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    }
+  }
+
+  /**
    * Initialize the recommender with rating data
    * @param ratings Array of rating objects
    */
   public async initialize(ratings: Rating[]): Promise<void> {
     this.log('Initializing collaborative filtering recommender...');
+    
+    // Load caches at startup
+    this.loadCachesFromDisk();
     
     // Build user ratings map
     ratings.forEach(rating => {
@@ -73,6 +170,24 @@ export abstract class CollaborativeFilteringRecommender {
     id2: string,
     type: 'user' | 'item'
   ): number {
+    // Check if we have the result in cache first
+    const cache = type === 'user' ? this.userSimilarityCache : this.itemSimilarityCache;
+    
+    // Create consistent order key - always use alphabetical order for cache key
+    const [firstId, secondId] = [id1, id2].sort();
+    
+    // Check if we have the first ID in the cache
+    if (cache.has(firstId)) {
+      const innerCache = cache.get(firstId)!;
+      // Check if we have the second ID in the inner cache
+      if (innerCache.has(secondId)) {
+        const cachedSimilarity = innerCache.get(secondId)!;
+        this.log(`collaborative filtering: Using cached ${type} similarity between ${id1} and ${id2}: ${cachedSimilarity.toFixed(4)}`, 'info');
+        return cachedSimilarity;
+      }
+    }
+    
+    // If not in cache, calculate and store
     this.log(`collaborative filtering: Calculating ${type} similarity between ${id1} and ${id2}`);
     
     const ratings1 = type === 'user' ? 
@@ -130,6 +245,12 @@ export abstract class CollaborativeFilteringRecommender {
         return 0;
       }
       
+      // Store in cache for future use
+      if (!cache.has(firstId)) {
+        cache.set(firstId, new Map());
+      }
+      cache.get(firstId)!.set(secondId, similarity);
+      
       return similarity;
     } catch (error) {
       this.log(`collaborative filtering: Error calculating similarity: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
@@ -165,6 +286,9 @@ export abstract class CollaborativeFilteringRecommender {
     }
       
     this.log(`collaborative filtering: Calculated positive similarity with ${similarityScores.length} users out of ${otherUsers.length} total`, 'info');
+    
+    // Save caches after calculations
+    this.saveCachesToDisk();
     
     if (similarityScores.length === 0) {
       this.log(`collaborative filtering: No users with positive similarity to ${userId} were found`, 'warning');
@@ -202,7 +326,7 @@ export abstract class CollaborativeFilteringRecommender {
   protected getSimilarItems(businessId: string, topN: number = 5): ItemSimilarityScore[] {
     const allItemIds = Array.from(this.itemRatings.keys());
 
-    return allItemIds
+    const similarities = allItemIds
       .filter(otherId => otherId !== businessId)
       .map(otherId => ({
         business_id: otherId,
@@ -211,6 +335,11 @@ export abstract class CollaborativeFilteringRecommender {
       .filter(sim => sim.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, topN);
+    
+    // Save caches after calculations
+    this.saveCachesToDisk();
+    
+    return similarities;
   }
 
   /**

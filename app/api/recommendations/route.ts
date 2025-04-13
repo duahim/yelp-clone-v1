@@ -171,19 +171,26 @@ export async function POST(request: Request) {
 
     // Validate input
     if (!userId || !algorithm || !userRatings) {
+      serverLog(`Missing required parameters: userId=${!!userId}, algorithm=${!!algorithm}, userRatings=${!!userRatings}`, 'error');
       return NextResponse.json(
         { success: false, error: 'Missing required parameters' },
         { status: 400 }
       );
     }
 
+    serverLog(`Processing request for user ${userId} with algorithm ${algorithm}`, 'info');
+    serverLog(`User ratings count: ${userRatings.length}`, 'info');
+
     // Check cache first if not forcing refresh
     if (!forceRefresh) {
+      serverLog(`Checking cache for user ${userId} with algorithm ${algorithm}`, 'info');
       const cachedData = getCachedRecommendations(userId, algorithm);
       if (cachedData) {
         // Check cache age (invalidate after 24 hours)
         const cacheAge = new Date().getTime() - new Date(cachedData.cachedAt).getTime();
         const maxCacheAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+        
+        serverLog(`Cache age: ${cacheAge}ms, Max age: ${maxCacheAge}ms`, 'info');
         
         if (cacheAge < maxCacheAge) {
           serverLog(`Using cached recommendations for user ${userId} using ${algorithm} algorithm`, 'info');
@@ -194,7 +201,11 @@ export async function POST(request: Request) {
         } else {
           serverLog(`Cache expired for user ${userId} using ${algorithm} algorithm`, 'info');
         }
+      } else {
+        serverLog(`No cache found for user ${userId} using ${algorithm} algorithm`, 'info');
       }
+    } else {
+      serverLog(`Force refresh requested for user ${userId} using ${algorithm} algorithm`, 'info');
     }
     
     serverLog(`Processing recommendations for user ${userId} using ${algorithm} algorithm`, 'info');

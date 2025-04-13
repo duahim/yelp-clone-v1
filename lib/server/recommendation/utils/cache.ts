@@ -17,7 +17,10 @@ export function initCacheDirectories() {
         serverLog(`Created cache directory: ${dir}`, 'info');
       } catch (error) {
         serverLog(`Error creating cache directory ${dir}: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+        console.error(`Error creating cache directory ${dir}:`, error);
       }
+    } else {
+      serverLog(`Cache directory already exists: ${dir}`, 'info');
     }
   }
 }
@@ -59,19 +62,22 @@ export function getCacheFilePath(userId: string, algorithm: string): string {
 // Check if cached recommendations exist and are valid
 export function getCachedRecommendations(userId: string, algorithm: string) {
   const cacheFilePath = getCacheFilePath(userId, algorithm);
+  serverLog(`Looking for cache file at: ${cacheFilePath}`, 'info');
   
   if (fs.existsSync(cacheFilePath)) {
     try {
       serverLog(`Found cached recommendations for user ${userId} using ${algorithm} algorithm`, 'info');
       const cachedData = JSON.parse(fs.readFileSync(cacheFilePath, 'utf-8'));
+      serverLog(`Cache file contents: ${JSON.stringify(cachedData, null, 2)}`, 'debug');
       return cachedData;
     } catch (error) {
       serverLog(`Error reading cache file: ${error instanceof Error ? error.message : 'Unknown error'}`, 'warn');
+      console.error(`Error reading cache file:`, error);
       return null;
     }
   }
   
-  serverLog(`No cache found for user ${userId} using ${algorithm} algorithm`, 'info');
+  serverLog(`No cache found for user ${userId} using ${algorithm} algorithm at path: ${cacheFilePath}`, 'info');
   return null;
 }
 
@@ -81,14 +87,17 @@ export function cacheRecommendations(userId: string, algorithm: string, data: an
   const cacheFilePath = getCacheFilePath(userId, algorithm);
   
   try {
-    fs.writeFileSync(cacheFilePath, JSON.stringify({
+    const cacheData = {
       ...data,
       cachedAt: new Date().toISOString()
-    }));
-    serverLog(`Saved recommendations to cache for user ${userId} using ${algorithm} algorithm`, 'info');
+    };
+    fs.writeFileSync(cacheFilePath, JSON.stringify(cacheData, null, 2));
+    serverLog(`Saved recommendations to cache for user ${userId} using ${algorithm} algorithm at path: ${cacheFilePath}`, 'info');
+    serverLog(`Cache file contents: ${JSON.stringify(cacheData, null, 2)}`, 'debug');
     return true;
   } catch (error) {
     serverLog(`Error writing to cache file: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    console.error(`Error writing to cache file:`, error);
     return false;
   }
 } 

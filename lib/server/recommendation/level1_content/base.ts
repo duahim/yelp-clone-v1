@@ -141,4 +141,29 @@ export class ContentBasedRecommender {
   public clearLogs(): void {
     this.logs = [];
   }
+  
+  /**
+   * Get the count of item profiles
+   * @returns The number of item profiles
+   */
+  public getItemProfilesCount(): number {
+    return this.itemProfiles.size;
+  }
+  
+  /**
+   * Get all item profiles
+   * @returns The map of all item profiles
+   */
+  public getAllItemProfiles(): Map<string, ItemProfile> {
+    return this.itemProfiles;
+  }
+  
+  /**
+   * Set the item profiles map (used for fallback scenarios)
+   * @param profiles Map of item profiles
+   */
+  public setItemProfiles(profiles: Map<string, ItemProfile>): void {
+    this.itemProfiles = profiles;
+    this.log(`Set ${profiles.size} item profiles`);
+  }
 }

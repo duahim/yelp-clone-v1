@@ -7,6 +7,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parse } from 'csv-parse/sync';
 
+// Add a cache for similar users with TTL
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes in milliseconds
+const similarUsersCache = new Map<string, { data: any; timestamp: number }>();
+
 // Interface for user ratings used in similarity calculation
 interface UserRating {
   user_id: string;
@@ -188,7 +192,19 @@ export async function GET(request: Request) {
   }
   
   serverLog(`Getting similar users for user ${userId} using ${algorithm} algorithm`, 'info');
-
+  
+  // Check cache for existing similar users data
+  const cacheKey = `${userId}_${algorithm}`;
+  const cached = similarUsersCache.get(cacheKey);
+  
+  // Return cached data if it exists and is not expired
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+    serverLog(`Using cached similar users for user ${userId} with ${algorithm} algorithm`, 'info');
+    return NextResponse.json(cached.data);
+  }
+  
+  // If we reach here, we need to calculate similar users
+  
   // Generate some realistic fake users based on the algorithm
   const generateUser = (id: string, namePrefix: string, index: number): SimilarUser => {
     return {
@@ -284,12 +300,30 @@ export async function GET(request: Request) {
       });
 
       serverLog(`Found ${similarUsers.length} similar users for collaborative filtering`, 'info');
+      
+      // Before returning, add this:
+      serverLog(`Caching ${similarUsers.length} similar users for user ${userId} with ${algorithm} algorithm`, 'info');
+      similarUsersCache.set(cacheKey, {
+        data: similarUsers,
+        timestamp: Date.now()
+      });
+      
+      return NextResponse.json(similarUsers);
     } catch (error) {
       serverLog(`Error finding similar users for collaborative filtering: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
       // Fallback to generated users if there's an error
       similarUsers = Array.from({ length: 4 }, (_, i) => 
         generateUser(`cf_${i}`, "User", i)
       );
+      
+      // Before returning, add this:
+      serverLog(`Caching ${similarUsers.length} similar users for user ${userId} with ${algorithm} algorithm`, 'info');
+      similarUsersCache.set(cacheKey, {
+        data: similarUsers,
+        timestamp: Date.now()
+      });
+      
+      return NextResponse.json(similarUsers);
     }
   }
   // For matrix factorization, find users with similar latent factors
@@ -398,6 +432,15 @@ export async function GET(request: Request) {
       } else {
         throw new Error('No similar users found using matrix factorization');
       }
+      
+      // Before returning, add this:
+      serverLog(`Caching ${similarUsers.length} similar users for user ${userId} with ${algorithm} algorithm`, 'info');
+      similarUsersCache.set(cacheKey, {
+        data: similarUsers,
+        timestamp: Date.now()
+      });
+      
+      return NextResponse.json(similarUsers);
     } catch (error) {
       // If anything goes wrong with the matrix approach, fall back to generated data
       serverLog(`Error finding similar users with matrix factorization: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
@@ -415,8 +458,24 @@ export async function GET(request: Request) {
           similarity_score: similarity
         };
       });
+      
+      // Before returning, add this:
+      serverLog(`Caching ${similarUsers.length} similar users for user ${userId} with ${algorithm} algorithm`, 'info');
+      similarUsersCache.set(cacheKey, {
+        data: similarUsers,
+        timestamp: Date.now()
+      });
+      
+      return NextResponse.json(similarUsers);
     }
   }
 
+  // At the end of the function, before the final return:
+  serverLog(`Caching ${similarUsers.length} similar users for user ${userId} with ${algorithm} algorithm`, 'info');
+  similarUsersCache.set(cacheKey, {
+    data: similarUsers,
+    timestamp: Date.now()
+  });
+  
   return NextResponse.json(similarUsers);
 } 

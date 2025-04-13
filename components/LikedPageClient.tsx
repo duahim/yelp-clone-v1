@@ -54,6 +54,9 @@ export default function LikedPageClient() {
   // Track previous number of liked items to detect threshold crossings
   const prevLikedCountRef = useRef<number>(0);
 
+  // Add this state near the other state declarations
+  const [pendingRequests, setPendingRequests] = useState<Set<string>>(new Set());
+
   // Check if user is logged in
   useEffect(() => {
     const userString = localStorage.getItem("currentUser")
@@ -306,6 +309,8 @@ export default function LikedPageClient() {
       console.log(`API response status: ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`API Error: ${response.status} ${response.statusText}`, errorData);
         throw new Error(`Failed to fetch ${algorithm} recommendations: ${response.statusText}`);
       }
 
@@ -359,10 +364,51 @@ export default function LikedPageClient() {
       
       // Update similar users if available
       if (algorithm !== 'content-based') {
-        const similarUsers = await fetch(`/api/similar-users?userId=${userId}&algorithm=${algorithm}`).then(r => r.json());
-        const newSimilarUsersCache = { ...similarUsersCache };
-        newSimilarUsersCache[algorithm] = similarUsers || [];
-        setSimilarUsersCache(newSimilarUsersCache);
+        try {
+          // Create a unique request key
+          const requestKey = `similar_users_${algorithm}_${userId}`;
+          
+          // Only fetch similar users if:
+          // 1. They're not in cache AND
+          // 2. There's not already a pending request for the same data
+          if ((!similarUsersCache[algorithm] || similarUsersCache[algorithm].length === 0) && 
+              !pendingRequests.has(requestKey)) {
+            
+            // Mark this request as pending
+            setPendingRequests(prev => new Set([...prev, requestKey]));
+            log(3, `Fetching similar users for ${algorithm} algorithm (request: ${requestKey})`);
+            
+            try {
+              const similarUsersResponse = await fetch(`/api/similar-users?userId=${userId}&algorithm=${algorithm}`);
+              
+              if (!similarUsersResponse.ok) {
+                console.error(`Failed to fetch similar users: ${similarUsersResponse.statusText}`);
+              } else {
+                const similarUsers = await similarUsersResponse.json();
+                
+                // Update the cache with an immutable pattern
+                const newSimilarUsersCache = { ...similarUsersCache };
+                newSimilarUsersCache[algorithm] = similarUsers || [];
+                setSimilarUsersCache(newSimilarUsersCache);
+                
+                log(3, `Successfully fetched ${similarUsers.length} similar users for ${algorithm}`);
+              }
+            } finally {
+              // Always remove the pending request flag, even if there was an error
+              setPendingRequests(prev => {
+                const updated = new Set([...prev]);
+                updated.delete(requestKey);
+                return updated;
+              });
+            }
+          } else if (similarUsersCache[algorithm]?.length > 0) {
+            log(3, `Using ${similarUsersCache[algorithm].length} cached similar users for ${algorithm} algorithm`);
+          } else if (pendingRequests.has(requestKey)) {
+            log(3, `Similar users request for ${algorithm} already in progress, skipping duplicate request`);
+          }
+        } catch (error) {
+          console.error(`Error fetching similar users:`, error);
+        }
       }
       
       // Add algorithm to generated set
@@ -379,6 +425,14 @@ export default function LikedPageClient() {
     } catch (error) {
       console.error(`Error updating ${algorithm} recommendations:`, error);
       log(3, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // Show error toast to user
+      toast({
+        title: "Error Loading Recommendations",
+        description: `Failed to load ${algorithm} recommendations. Please try again.`,
+        variant: "destructive",
+      });
+      
       throw error;
     }
   };
@@ -386,45 +440,73 @@ export default function LikedPageClient() {
   // Update recommendations based on current tab
   const handleTabChange = (value: string) => {
     log(3, `Tab changed to: ${value}`);
-    setCurrentTab(value as RecommendationAlgorithm);
     
-    // Important: Wait for tab state to update before updating recommendations
+    // Store the new tab value in a local variable to use in closures
+    const newTab = value as RecommendationAlgorithm;
+    
+    // Set the current tab state
+    setCurrentTab(newTab);
+    
+    // Clear recommendations while waiting for new ones to ensure UI feedback
+    setRecommendations([]);
+    setSimilarUsers([]);
+    
+    // Use setTimeout to defer processing until after state updates
     setTimeout(() => {
-      const newTab = value as RecommendationAlgorithm;
-      
-      // Check if this algorithm has special threshold requirements
-      const needsMoreLikedItems = 
-        newTab === 'collaborative' && 
-        likedRestaurants.length < 3;
-      
-      // First set recommendations from cache if available and requirements are met
-      if (recommendationsCache[newTab]?.length > 0 && !needsMoreLikedItems) {
-        log(3, `Setting ${recommendationsCache[newTab].length} cached recommendations for ${newTab}`);
-        setRecommendations(recommendationsCache[newTab]);
-        setSimilarUsers(similarUsersCache[newTab] || []);
-        return; // Exit early if we have valid cached recommendations
-      }
-      
-      // Clear recommendations while waiting for new ones
-      setRecommendations([]);
-      setSimilarUsers([]);
-      
-      // Only fetch new recommendations if we have liked restaurants and no valid cache
-      if (likedRestaurants.length > 0 && currentUser) {
-        updateRecommendationsForAlgorithm(newTab, likedRestaurants, currentUser.user_id, false)
-          .then(results => {
-            if (results && results.length > 0) {
-              // Only update if we're still on the same tab
-              if (currentTab === newTab) {
-                log(3, `Setting ${results.length} fresh recommendations for ${newTab}`);
-                setRecommendations(results);
-              }
+      // Use state updater functions to ensure we have the latest state
+      setRecommendations(currentRecommendations => {
+        setSimilarUsers(currentSimilarUsers => {
+          // Check if this algorithm has special threshold requirements
+          const needsMoreLikedItems = 
+            newTab === 'collaborative' && 
+            likedRestaurants.length < 3;
+          
+          // First set recommendations from cache if available and requirements are met
+          if (recommendationsCache[newTab]?.length > 0 && !needsMoreLikedItems) {
+            log(3, `Setting ${recommendationsCache[newTab].length} cached recommendations for ${newTab}`);
+            
+            // Check if we have similar users in cache
+            if (similarUsersCache[newTab]?.length > 0) {
+              log(3, `Using ${similarUsersCache[newTab].length} cached similar users for ${newTab}`);
+              setSimilarUsers(similarUsersCache[newTab]);
             }
-          })
-          .catch(error => {
-            console.error(`Error updating recommendations for ${newTab}:`, error);
-          });
-      }
+            
+            // Return cached recommendations
+            return recommendationsCache[newTab];
+          }
+          
+          // Only fetch new recommendations if:
+          // 1. We have liked restaurants
+          // 2. The current user is set
+          // 3. The algorithm hasn't been generated yet
+          // 4. We don't need more liked items for this algorithm
+          if (likedRestaurants.length > 0 && 
+              currentUser && 
+              !generatedAlgorithms.has(newTab) && 
+              !needsMoreLikedItems) {
+            // Start the async fetch - this will update state when complete
+            updateRecommendationsForAlgorithm(newTab, likedRestaurants, currentUser.user_id, false)
+              .then(results => {
+                if (results && results.length > 0) {
+                  // Only update if we're still on the same tab
+                  if (currentTab === newTab) {
+                    log(3, `Setting ${results.length} fresh recommendations for ${newTab}`);
+                    setRecommendations(results);
+                  }
+                }
+              })
+              .catch(error => {
+                console.error(`Error updating recommendations for ${newTab}:`, error);
+              });
+          }
+          
+          // Keep similar users empty while waiting for new ones
+          return currentSimilarUsers;
+        });
+        
+        // Keep recommendations empty while waiting for new ones
+        return currentRecommendations; 
+      });
     }, 0);
   };
 
